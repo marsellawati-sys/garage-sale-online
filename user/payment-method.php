@@ -1,221 +1,299 @@
 <?php
 session_start();
-error_reporting(E_ALL & ~E_NOTICE); 
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
 include('includes/config.php');
 
-if(strlen($_SESSION['login'])==0) {   
-    header('location:login.php');
-} else {
-    $uid = $_SESSION['id'];
-    
-    // 1. Ambil Data User
-    $query_u = mysqli_query($con, "SELECT * FROM users WHERE id='$uid'");
-    $user_data = mysqli_fetch_array($query_u);
+// Proteksi Keamanan: Jika user belum login, alihkan ke halaman login/akun
+if (!isset($_SESSION['login']) || strlen($_SESSION['login']) == 0) {
+    header('location:my-account.php');
+    exit();
+}
 
-    // 2. Ambil Data Produk (Bisa dari URL ?id=... atau dari Keranjang terakhir)
-    $pid_url = isset($_GET['id']) ? intval($_GET['id']) : 0;
-    if($pid_url > 0) {
-        $product_q = mysqli_query($con, "SELECT id as pid, productName, productImage1, productPrice FROM products WHERE id='$pid_url'");
+// Proteksi Sesi Ganda: Jika keranjang kosong, cegah user bypass mengetik URL langsung
+if (empty($_SESSION['cart'])) {
+    header('location:index.php');
+    exit();
+}
+
+$uid = $_SESSION['id'];
+
+// ========================================================
+// 1. PENGAMBILAN DATA USER & DETEKSI ONGKIR OTOMATIS
+// ========================================================
+$query_user = mysqli_query($con, "SELECT * FROM users WHERE id='$uid'");
+$user = mysqli_fetch_array($query_user);
+
+// Ambil data dasar alamat dari database
+$alamat_jalan   = $user['shippingAddress'] ?? ''; 
+$wilayah_gabung = $user['shippingCity'] ?? ''; 
+$kode_pos       = $user['shippingPincode'] ?? '';
+
+$provinsi_tampil = "Belum diisi";
+$kota_tampil     = "Belum diisi";
+
+if (!empty($wilayah_gabung)) {
+    $pecah_wilayah = explode(',', $wilayah_gabung);
+    if (count($pecah_wilayah) >= 2) {
+        $provinsi_tampil = trim(end($pecah_wilayah));
+        $kota_tampil     = trim($pecah_wilayah[count($pecah_wilayah) - 2]);
     } else {
-        $product_q = mysqli_query($con, "SELECT products.id as pid, products.productName, products.productImage1, products.productPrice 
-                                         FROM cart JOIN products ON cart.productId=products.id 
-                                         WHERE cart.userId='$uid' ORDER BY cart.id DESC LIMIT 1");
+        $provinsi_tampil = trim($wilayah_gabung);
+        $kota_tampil     = trim($wilayah_gabung);
     }
+}
 
-    if($product_q && mysqli_num_rows($product_q) > 0) {
-        $p_data = mysqli_fetch_array($product_q);
-        $p_id    = $p_data['pid'];
-        $p_name  = $p_data['productName'];
-        $p_img   = $p_data['productImage1'];
-        $p_price = (int)$p_data['productPrice'];
-    } else {
-        echo "<script>alert('Produk tidak ditemukan!'); window.location.href='index.php';</script>";
+// ATUR NOMINAL ONGKOS KIRIM DI SINI
+$ongkir_jawa      = 15000;  
+$ongkir_luar_jawa = 45000;  
+
+$ongkir_terpilih = 0;
+$status_wilayah  = "Alamat Kosong";
+
+$daftar_provinsi_jawa = [
+    'banten', 'dki jakarta', 'jakarta', 'jawa barat', 
+    'jawa tengah', 'di yogyakarta', 'yogyakarta', 'jawa timur'
+];
+
+$provinsi_cek = strtolower(trim($provinsi_tampil));
+
+if (empty($alamat_jalan) || empty($wilayah_gabung)) {
+    $ongkir_terpilih = 0;
+    $status_wilayah  = "Alamat belum dilengkapi di My Account";
+} elseif (in_array($provinsi_cek, $daftar_provinsi_jawa)) {
+    $ongkir_terpilih = $ongkir_jawa;
+    $status_wilayah  = "Pulau Jawa (Tarif Reguler)";
+} else {
+    $ongkir_terpilih = $ongkir_luar_jawa;
+    $status_wilayah  = "Luar Pulau Jawa (Tarif Luar Pulau)";
+}
+
+// ========================================================
+// 2. HITUNG TOTAL BELANJA 
+// ========================================================
+$total_produk = 0;
+if (!empty($_SESSION['cart']) && is_array($_SESSION['cart'])) {
+    $p_ids = array_keys($_SESSION['cart']);
+    $ids_string = implode(',', $p_ids);
+    $query_cart = mysqli_query($con, "SELECT productPrice FROM products WHERE id IN ($ids_string)");
+    if ($query_cart) {
+        while ($row_c = mysqli_fetch_array($query_cart)) {
+            $total_produk += (float)$row_c['productPrice']; 
+        }
+    }
+}
+$grand_total = $total_produk + $ongkir_terpilih;
+
+// ========================================================
+// 3. PROSES KETIKA TOMBOL SUBMIT ORDER DIKLIK (PRODUK TERKUNCI AMAN)
+// ========================================================
+if (isset($_POST['submit_order'])) {
+    $pay_method = mysqli_real_escape_string($con, $_POST['pay_method'] ?? 'COD');
+    
+    if (empty($alamat_jalan) || empty($wilayah_gabung)) {
+        echo "<script>alert('Harap lengkapi alamat pengiriman Anda terlebih dahulu di menu My Account!'); window.location='my-account.php';</script>";
         exit();
     }
 
-    // --- LOGIKA DISKON & ONGKIR ---
-    // Diskon 5% jika belanja minimal 100rb
-    $diskon = ($p_price >= 100000) ? ($p_price * 0.05) : 0;
-    $base_total = $p_price - $diskon;
-    $ongkir_awal = 15000; // Default J&T
+    if (!empty($_SESSION['cart'])) {
+        
+        // AMAN: Validasi Race Condition Stok Khusus Konsep Thrift Item 1-of-1
+        foreach ($_SESSION['cart'] as $pid => $qty) {
+            $pid_secure = intval($pid);
+            $check_stock = mysqli_query($con, "SELECT productAvailability FROM products WHERE id='$pid_secure'");
+            if ($check_stock && mysqli_num_rows($check_stock) > 0) {
+                $stock_row = mysqli_fetch_array($check_stock);
+                $availability = trim($stock_row['productAvailability'] ?? '');
+                
+                // Jika keduluan dibeli pembeli lain (stok sudah Out of Stock)
+                if (strcasecmp($availability, 'Out of Stock') == 0 || $availability == '') {
+                    echo "<script>
+                        alert('Maaf, salah satu pakaian di keranjang Anda baru saja terjual beberapa detik yang lalu! Pesanan otomatis dibatalkan.'); 
+                        window.location='index.php';
+                    </script>";
+                    exit();
+                }
+            }
+        }
+
+        // Trik Jitu: Ambil salinan id produk di dalam keranjang ke session invoice sebelum dihancurkan
+        $_SESSION['last_invoice_items'] = array_keys($_SESSION['cart']);
+
+        foreach ($_SESSION['cart'] as $pid => $qty) {
+            $pid_secure = intval($pid);
+            // Memasukkan data pesanan ke database 
+            mysqli_query($con, "INSERT INTO orders(userId, productId, quantity, paymentMethod) VALUES('$uid', '$pid_secure', '1', '$pay_method')");
+            
+            // Otomatis ubah status produk menjadi Out of Stock setelah sukses checkout agar tidak bisa dibeli lagi
+            mysqli_query($con, "UPDATE products SET productAvailability='Out of Stock' WHERE id='$pid_secure'");
+        }
+        
+        // Hancurkan isi keranjang belanja utama website
+        unset($_SESSION['cart']);
+        
+        // Alihkan halaman ke invoice.php membawa tanda sukses
+        echo "<script>
+            alert('Pesanan Anda berhasil ditempatkan!');
+            window.location='invoice.php';
+        </script>";
+        exit();
+    } else {
+        echo "<script>alert('Keranjang Anda kosong!'); window.location='index.php';</script>";
+    }
+}
 ?>
 
 <!DOCTYPE html>
 <html lang="id">
 <head>
-    <meta charset="utf-8">
-    <title>Checkout | Garage Sale Official</title>
-    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <meta charset="UTF-8">
+    <title>NexStore | Metode Pembayaran & Checkout</title>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
     <style>
-        :root { --dark: #111111; --border: #ececec; --bg: #fdfcfb; --accent: #d4a373; }
-        body { background-color: var(--bg); font-family: 'Plus Jakarta Sans', sans-serif; color: #333; }
-        .main-container { max-width: 1100px; margin-top: 40px; margin-bottom: 60px; }
+        :root {
+            --beige-bg: #fdfcfb;
+            --beige-border: #e8e4d8;
+            --accent-dark: #111111;
+        }
+        body { font-family: 'Plus Jakarta Sans', sans-serif; background: #fff; }
+        .logo { font-weight: 900; font-size: 28px; letter-spacing: -1.5px; text-decoration: none; color: var(--accent-dark); }
+        .top-brand-row { display: flex; justify-content: space-between; align-items: center; padding: 20px 5%; border-bottom: 1px solid var(--beige-border); }
         
-        /* Card UI */
-        .card-custom { background: #fff; border-radius: 24px; border: 1px solid var(--border); padding: 25px; margin-bottom: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.02); }
-        .product-hero { width: 100%; height: 320px; background: #fff; border-radius: 20px; display: flex; align-items: center; justify-content: center; border: 1px solid #f0f0f0; margin-bottom: 20px; overflow: hidden; }
-        .product-hero img { max-width: 90%; max-height: 90%; object-fit: contain; }
+        .checkout-section { padding: 50px 5%; }
+        .address-card { background: #fff; padding: 25px; border: 1px solid var(--beige-border); border-radius: 20px; box-shadow: 0 4px 20px rgba(0,0,0,0.01); height: 100%; }
+        .address-title { font-weight: 800; font-size: 15px; color: var(--accent-dark); border-bottom: 2px solid var(--accent-dark); padding-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px; }
+        
+        .info-label { font-size: 12px; color: #888; font-weight: 600; text-transform: uppercase; display: block; margin-top: 12px; margin-bottom: 2px; }
+        .info-value { font-size: 15px; font-weight: 700; color: #222; display: block; }
+        
+        .summary-card { background: var(--accent-dark); color: #fff; border-radius: 28px; padding: 35px; position: sticky; top: 30px; }
+        
+        .payment-method-box { background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); border-radius: 16px; padding: 15px; margin-bottom: 15px; cursor: pointer; display: flex; align-items: center; gap: 12px; transition: 0.2s; }
+        .payment-method-box:hover { background: rgba(255,255,255,0.1); }
+        .payment-method-box input[type="radio"] { accent-color: #fff; width: 18px; height: 18px; }
 
-        /* Selection Box */
-        .box-select { border: 2px solid #f0f0f0; border-radius: 16px; padding: 18px; margin-bottom: 12px; cursor: pointer; transition: 0.3s; position: relative; }
-        .box-select.active { border-color: var(--dark); background: #fafafa; }
-        .box-select.active::after { content: '\f058'; font-family: 'Font Awesome 6 Free'; font-weight: 900; position: absolute; right: 20px; top: 20px; color: var(--dark); font-size: 18px; }
-
-        /* Sidebar Payment */
-        .sidebar-pay { background: var(--dark); color: #fff; border-radius: 35px; padding: 35px; position: sticky; top: 25px; }
-        .price-row { display: flex; justify-content: space-between; margin-bottom: 12px; font-size: 14px; opacity: 0.8; }
-        .pay-item { border: 1px solid #444; border-radius: 18px; padding: 18px; margin-bottom: 12px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; transition: 0.2s; }
-        .pay-item.active { border-color: #fff; background: rgba(255,255,255,0.1); }
-        .btn-pay { background: #fff; color: #000; border-radius: 16px; padding: 20px; width: 100%; font-weight: 800; border: none; margin-top: 20px; text-transform: uppercase; letter-spacing: 1px; transition: 0.3s; }
-        .btn-pay:hover { background: #f0f0f0; transform: translateY(-3px); }
-
-        .btn-back { color: #666; text-decoration: none; font-weight: 600; display: inline-flex; align-items: center; margin-bottom: 25px; transition: 0.3s; }
-        .btn-back:hover { color: var(--dark); transform: translateX(-5px); }
+        .btn-submit-order { background: #fff; color: #000; width: 100%; padding: 18px; border-radius: 18px; font-weight: 800; border: none; margin-top: 20px; display: block; text-align: center; text-decoration: none; transition: 0.3s; }
+        .btn-submit-order:hover { background: #eee; transform: translateY(-3px); color: #000; }
     </style>
 </head>
 <body>
 
-<div class="container main-container">
-    <a href="javascript:history.back()" class="btn-back">
-        <i class="fa fa-arrow-left me-2"></i> Kembali ke Toko
-    </a>
-
-    <div class="row g-4">
-        <div class="col-lg-7">
-            <h3 class="fw-800 mb-4">Checkout</h3>
-
-            <div class="card-custom">
-                <div class="product-hero">
-                    <img src="admin/productimages/<?php echo $p_id; ?>/<?php echo $p_img; ?>" onerror="this.src='https://via.placeholder.com/500';">
-                </div>
-                <h5 class="fw-800 mb-1"><?php echo htmlspecialchars($p_name); ?></h5>
-                <p class="text-muted fw-bold mb-0">Rp <?php echo number_format($p_price, 0, ',', '.'); ?></p>
-            </div>
-
-            <div class="card-custom">
-                <h6 class="fw-bold small text-uppercase text-muted mb-3">Alamat Pengiriman</h6>
-                <div class="box-select active">
-                    <div class="fw-800"><?php echo htmlspecialchars($user_data['name']); ?></div>
-                    <div class="small text-muted mt-1">
-                        <?php echo htmlspecialchars($user_data['shippingAddress'] ?? 'Alamat belum diatur'); ?>, 
-                        <?php echo htmlspecialchars($user_data['shippingCity'] ?? ''); ?>
-                    </div>
-                </div>
-            </div>
-
-            <div class="card-custom">
-                <h6 class="fw-bold small text-uppercase text-muted mb-3">Opsi Pengiriman (Flat)</h6>
-                <div class="row g-3">
-                    <div class="col-6">
-                        <div class="box-select active" id="jnt" onclick="updateExp('jnt', 15000)">
-                            <div class="fw-bold">J&T Express</div>
-                            <div class="small text-muted">Rp 15.000</div>
-                        </div>
-                    </div>
-                    <div class="col-6">
-                        <div class="box-select" id="jne" onclick="updateExp('jne', 20000)">
-                            <div class="fw-bold">JNE Reguler</div>
-                            <div class="small text-muted">Rp 20.000</div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <div class="col-lg-5">
-            <div class="sidebar-pay shadow-lg">
-                <h5 class="fw-800 mb-4">Detail Pembayaran</h5>
-                
-                <div class="price-row">
-                    <span>Harga Barang</span>
-                    <span>Rp <?php echo number_format($p_price, 0, ',', '.'); ?></span>
-                </div>
-
-                <div class="price-row text-warning">
-                    <span>
-                        Diskon <?php echo ($p_price >= 100000) ? '(Promo 5%)' : '<small style="font-size:10px; opacity:0.6;">(Min. Belanja 100rb)</small>'; ?>
-                    </span>
-                    <span>- Rp <?php echo number_format($diskon, 0, ',', '.'); ?></span>
-                </div>
-
-                <div class="price-row">
-                    <span>Ongkos Kirim</span>
-                    <span id="label-ongkir">Rp 15.000</span>
-                </div>
-
-                <hr style="opacity: 0.1; margin: 25px 0;">
-
-                <div class="d-flex justify-content-between align-items-center mb-4">
-                    <span class="fs-5">Total Bayar</span>
-                    <span class="fs-2 fw-800" id="label-total">Rp <?php echo number_format($base_total + $ongkir_awal, 0, ',', '.'); ?></span>
-                </div>
-
-                <form action="invoice.php" method="post">
-                    <input type="hidden" name="product_id" value="<?php echo $p_id; ?>">
-                    <input type="hidden" name="shipping_cost" id="in-ongkir" value="15000">
-                    <input type="hidden" name="grand_total" id="in-total" value="<?php echo ($base_total + $ongkir_awal); ?>">
-                    <input type="hidden" name="payment_method" id="in-method" value="Transfer Bank">
-
-                    <label class="small text-uppercase opacity-50 fw-bold mb-3 d-block" style="letter-spacing:1px; font-size:10px;">Pilih Metode Pembayaran</label>
-
-                    <div class="pay-item active" id="m-bank" onclick="setMethod('Transfer Bank')">
-                        <div class="small">
-                            <b class="d-block mb-1">Transfer Bank (Manual)</b>
-                            <span class="opacity-50">BCA 8820 1234 567 a/n Garage Sale</span>
-                        </div>
-                        <i class="fa fa-check-circle" id="c-bank"></i>
-                    </div>
-
-                    <div class="pay-item" id="m-cod" onclick="setMethod('COD')">
-                        <div class="small">
-                            <b class="d-block mb-1">Cash on Delivery (COD)</b>
-                            <span class="opacity-50">Bayar langsung ke kurir saat sampai</span>
-                        </div>
-                        <i class="fa fa-circle opacity-20" id="c-cod"></i>
-                    </div>
-
-                    <button type="submit" name="submit" class="btn-pay shadow">Konfirmasi & Bayar</button>
-                </form>
-            </div>
-            <p class="text-center mt-4 small text-muted">Aman & Terpercaya di Garage Sale Official</p>
-        </div>
+<div class="top-brand-row">
+    <a href="index.php" class="logo">GarageSale.</a>
+    <div class="d-flex align-items-center">
+        <a href="my-cart.php" class="text-dark fw-bold text-decoration-none small"><i class="fa fa-chevron-left me-1"></i> Kembali ke Keranjang</a>
     </div>
 </div>
 
-<script>
-    const basePrice = <?php echo (int)$base_total; ?>;
+<div class="container-fluid checkout-section">
+    <form name="payment" method="post" action="payment-method.php">
+        <div class="row g-5">
+            
+            <div class="col-lg-8">
+                <h3 class="fw-800 mb-4">Informasi Checkout Pengiriman</h3>
+                
+                <div class="row g-4">
+                    <div class="col-md-6">
+                        <div class="address-card">
+                            <h5 class="address-title mb-3"><i class="fa-regular fa-file-lines me-2"></i>Billing Address</h5>
+                            
+                            <span class="info-label">Nama Lengkap</span>
+                            <span class="info-value"><?php echo htmlspecialchars($user['name'] ?? '-'); ?></span>
 
-    function updateExp(kurir, harga) {
-        // Update UI Box
-        document.getElementById('jnt').classList.toggle('active', kurir === 'jnt');
-        document.getElementById('jne').classList.toggle('active', kurir === 'jne');
-        
-        // Update Label Text
-        document.getElementById('label-ongkir').innerText = "Rp " + harga.toLocaleString('id-ID');
-        document.getElementById('label-total').innerText = "Rp " + (basePrice + harga).toLocaleString('id-ID');
-        
-        // Update Hidden Input Form
-        document.getElementById('in-ongkir').value = harga;
-        document.getElementById('in-total').value = basePrice + harga;
-    }
+                            <span class="info-label">Alamat Rumah / Jalan</span>
+                            <span class="info-value"><?php echo htmlspecialchars($alamat_jalan ?: 'Belum diisi'); ?></span>
 
-    function setMethod(method) {
-        // Update Hidden Input
-        document.getElementById('in-method').value = method;
-        
-        // Update UI Box
-        document.getElementById('m-bank').classList.toggle('active', method === 'Transfer Bank');
-        document.getElementById('m-cod').classList.toggle('active', method === 'COD');
-        
-        // Update Icon
-        document.getElementById('c-bank').className = (method === 'Transfer Bank') ? "fa fa-check-circle" : "fa fa-circle opacity-20";
-        document.getElementById('c-cod').className = (method === 'COD') ? "fa fa-check-circle" : "fa fa-circle opacity-20";
-    }
-</script>
+                            <span class="info-label">Kota / Kabupaten</span>
+                            <span class="info-value"><?php echo htmlspecialchars($kota_tampil); ?></span>
+
+                            <span class="info-label">Provinsi</span>
+                            <span class="info-value"><?php echo htmlspecialchars($provinsi_tampil); ?></span>
+
+                            <span class="info-label">Kode Pos</span>
+                            <span class="info-value"><?php echo htmlspecialchars($kode_pos ?: '-'); ?></span>
+                        </div>
+                    </div>
+
+                    <div class="col-md-6">
+                        <div class="address-card">
+                            <h5 class="address-title mb-3"><i class="fa fa-truck me-2"></i>Shipping Address</h5>
+                            
+                            <span class="info-label">Tujuan Pengiriman</span>
+                            <span class="info-value"><?php echo htmlspecialchars($alamat_jalan ?: 'Belum diisi'); ?></span>
+
+                            <span class="info-label">Kota Tujuan</span>
+                            <span class="info-value"><?php echo htmlspecialchars($kota_tampil); ?></span>
+
+                            <span class="info-label">Provinsi Tujuan</span>
+                            <span class="info-value">
+                                <?php echo htmlspecialchars($provinsi_tampil); ?> 
+                                <br>
+                                <span class="badge bg-dark mt-1 text-uppercase" style="font-size: 10px; letter-spacing: 0.5px;">
+                                    🚀 <?php echo $status_wilayah; ?>
+                                </span>
+                            </span>
+
+                            <span class="info-label">Kode Pos Tujuan</span>
+                            <span class="info-value"><?php echo htmlspecialchars($kode_pos ?: '-'); ?></span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="mt-4 text-start">
+                    <a href="my-account.php" class="btn btn-sm btn-outline-dark rounded-3 px-3 fw-bold">
+                        <i class="fa fa-marker me-1"></i> Sesuaikan Alamat di My Account
+                    </a>
+                </div>
+            </div>
+
+            <div class="col-lg-4">
+                <div class="summary-card">
+                    <h4 class="fw-800 mb-4">Metode Pembayaran</h4>
+                    
+                    <label class="payment-method-box">
+                        <input type="radio" name="pay_method" value="COD" checked>
+                        <div>
+                            <span class="fw-bold d-block text-white">Cash On Delivery (COD)</span>
+                            <small class="text-white-50" style="font-size: 11px;">Bayar di tempat saat barang tiba</small>
+                        </div>
+                    </label>
+
+                    <h5 class="fw-800 mt-5 mb-3">Ringkasan Tagihan</h5>
+                    
+                    <div class="d-flex justify-content-between mb-2 opacity-75">
+                        <span>Total Produk (1 Pcs)</span>
+                        <span>Rp. <?php echo number_format($total_produk, 0, ',', '.'); ?></span>
+                    </div>
+                    
+                    <div class="d-flex justify-content-between mb-2 opacity-75">
+                        <span>Ongkos Kirim Sistem</span>
+                        <span class="text-warning fw-bold">Rp. <?php echo number_format($ongkir_terpilih, 0, ',', '.'); ?></span>
+                    </div>
+                    
+                    <hr style="border-color: rgba(255,255,255,0.15)">
+                    
+                    <div class="d-flex justify-content-between align-items-center mt-4">
+                        <span class="h6 mb-0 fw-bold">Grand Total</span>
+                        <span class="h3 fw-800 mb-0 text-white">Rp. <?php echo number_format($grand_total, 0, ',', '.'); ?></span>
+                    </div>
+                    
+                    <button type="submit" name="submit_order" class="btn-submit-order">
+                        BUAT PESANAN SEKARANG
+                    </button>
+                    
+                    <div class="mt-4 text-center opacity-50" style="font-size: 12px;">
+                        <i class="fa fa-shield-halved me-1"></i> Transaksi Terenkripsi & Aman
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </form>
+</div>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>
-<?php } ?>
