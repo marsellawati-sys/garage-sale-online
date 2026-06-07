@@ -1,13 +1,14 @@
 <?php 
 session_start();
-error_reporting(0); 
+error_reporting(E_ALL); 
+ini_set('display_errors', 1);
 include('includes/config.php');
 
-// 1. Logika Add to Cart & Buy Now
+// 1. LOGIKA UTAMA: Add to Cart & Buy Now (Checkout Langsung)
 if(isset($_GET['action']) && $_GET['action']=="add"){
     $id = intval($_GET['id']);
     
-    // Fitur Beli Langsung: Kosongkan keranjang lama agar fokus ke produk ini saja
+    // Fitur Beli Langsung: Bersihkan keranjang lama agar fokus ke produk ini saja
     if(isset($_GET['buy']) && $_GET['buy'] == "now"){
         unset($_SESSION['cart']);
     }
@@ -24,13 +25,15 @@ if(isset($_GET['action']) && $_GET['action']=="add"){
     }
 
     if(isset($_GET['buy']) && $_GET['buy'] == "now"){
-        header('location:checkout.php'); 
+        // REPARASI: Dialihkan langsung ke payment-method.php menggunakan JS agar terhindar dari error 'Header Already Sent'
+        echo "<script>window.location.href='payment-method.php';</script>";
     } else {
         echo "<script>alert('Produk berhasil ditambahkan ke keranjang'); window.location.href='my-cart.php'</script>";
     }
     exit();
 }
 
+// Mengambil ID Produk dari URL
 $pid = isset($_GET['pid']) ? intval($_GET['pid']) : 0;
 ?>
 
@@ -52,6 +55,7 @@ $pid = isset($_GET['pid']) ? intval($_GET['pid']) : 0;
             --thrift-clay: #8d775f;
             --thrift-sand: #e6e2d6;
             --thrift-cream: #ffffff;
+            --thrift-disabled: #a0a0a0;
         }
 
         body { 
@@ -78,7 +82,7 @@ $pid = isset($_GET['pid']) ? intval($_GET['pid']) : 0;
         }
         .home-link:hover { color: var(--thrift-clay); }
 
-        /* --- Container & Card --- */
+        /* --- Container Utama --- */
         .glass-container {
             background: var(--thrift-cream);
             border-radius: 32px;
@@ -99,6 +103,7 @@ $pid = isset($_GET['pid']) ? intval($_GET['pid']) : 0;
             display: flex;
             align-items: center;
             justify-content: center;
+            position: relative;
         }
         .product-img {
             width: 100%; height: 100%;
@@ -107,7 +112,21 @@ $pid = isset($_GET['pid']) ? intval($_GET['pid']) : 0;
         }
         .image-wrapper:hover .product-img { transform: scale(1.08); }
 
-        /* --- Text Styling --- */
+        /* Badge Overlay saat Produk Habis */
+        .soldout-badge-overlay {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            display: flex; align-items: center; justify-content: center;
+            z-index: 2;
+        }
+        .soldout-text-pill {
+            background: #000; color: #fff;
+            padding: 12px 30px; border-radius: 50px;
+            font-weight: 800; font-size: 16px; letter-spacing: 2px;
+        }
+
+        /* --- Detail Text & Branding --- */
         .brand-pill {
             display: inline-block;
             background: var(--thrift-clay);
@@ -142,7 +161,7 @@ $pid = isset($_GET['pid']) ? intval($_GET['pid']) : 0;
             font-weight: 400;
         }
 
-        /* --- Action Buttons --- */
+        /* --- Tombol Aksi / Action Buttons --- */
         .action-group {
             display: flex;
             gap: 12px;
@@ -164,8 +183,18 @@ $pid = isset($_GET['pid']) ? intval($_GET['pid']) : 0;
         }
         .btn-dark { background: var(--thrift-dark); color: white !important; border: none; }
         .btn-outline { background: transparent; color: var(--thrift-dark) !important; border: 2px solid var(--thrift-dark); }
-        .btn-main:hover { transform: translateY(-4px); box-shadow: 0 10px 20px rgba(0,0,0,0.1); }
+        .btn-main:hover:not(.disabled) { transform: translateY(-4px); box-shadow: 0 10px 20px rgba(0,0,0,0.1); }
 
+        /* Style Kunci Mati Tombol Sold Out */
+        .btn-main.disabled {
+            background: #e0e0e0 !important;
+            color: var(--thrift-disabled) !important;
+            border: 2px solid #e0e0e0 !important;
+            pointer-events: none;
+            cursor: not-allowed;
+        }
+
+        /* Tombol Share Bundar Modern */
         .btn-icon {
             width: 64px; height: 64px;
             border-radius: 18px;
@@ -173,9 +202,14 @@ $pid = isset($_GET['pid']) ? intval($_GET['pid']) : 0;
             background: white;
             display: flex; align-items: center; justify-content: center;
             color: var(--thrift-dark); transition: 0.3s;
+            cursor: pointer;
+        }
+        .btn-icon:hover {
+            background: var(--thrift-dark);
+            color: white;
         }
 
-        /* --- Info Section --- */
+        /* --- Bagian Informasi & Deskripsi --- */
         .details-section {
             margin-top: 50px;
             padding-top: 30px;
@@ -188,16 +222,82 @@ $pid = isset($_GET['pid']) ? intval($_GET['pid']) : 0;
         }
         .desc-text { line-height: 1.8; color: #5a5a5a; font-size: 15px; }
 
-        /* --- Toast --- */
+        /* Toast Notifikasi Minimalis */
         #custom-toast {
-            visibility: hidden; background: var(--thrift-dark);
-            color: white; padding: 12px 24px; border-radius: 12px;
-            position: fixed; bottom: 30px; left: 50%;
-            transform: translateX(-50%); z-index: 1000; font-weight: 600;
+            visibility: hidden; 
+            background: rgba(17, 17, 17, 0.95);
+            backdrop-filter: blur(8px);
+            color: white; 
+            padding: 14px 28px; 
+            border-radius: 16px;
+            position: fixed; 
+            bottom: 30px; 
+            left: 50%;
+            transform: translate(-50%, 20px); 
+            z-index: 9999; 
+            font-weight: 600;
+            font-size: 14px;
+            box-shadow: 0 15px 35px rgba(0,0,0,0.16);
+            transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            opacity: 0;
         }
-        #custom-toast.show { visibility: visible; animation: fadeInUp 0.4s; }
+        #custom-toast.show { 
+            visibility: visible; 
+            opacity: 1; 
+            transform: translate(-50%, 0); 
+        }
 
-        @keyframes fadeInUp { from { opacity:0; transform: translate(-50%, 20px); } to { opacity:1; transform: translate(-50%, 0); } }
+        /* --- Modal Share Custom Premium --- */
+        .share-modal-content {
+            border-radius: 24px;
+            border: none;
+            background: var(--thrift-cream);
+            padding: 15px;
+        }
+        .share-modal-header {
+            border-bottom: 1px solid #f0eee9;
+            padding-bottom: 15px;
+        }
+        .share-modal-title {
+            font-family: 'Fraunces', serif;
+            font-weight: 700;
+            color: var(--thrift-dark);
+        }
+        .share-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 15px;
+            padding: 20px 0 10px 0;
+            text-align: center;
+        }
+        .share-item {
+            text-decoration: none !important;
+            color: var(--thrift-dark);
+            font-size: 12px;
+            font-weight: 700;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 8px;
+            transition: 0.3s;
+        }
+        .share-item:hover {
+            transform: translateY(-3px);
+        }
+        .share-icon-circle {
+            width: 55px; height: 55px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 22px;
+            color: white;
+            box-shadow: 0 8px 15px rgba(0,0,0,0.05);
+        }
+        .bg-wa { background-color: #25D366; }
+        .bg-ig { background: linear-gradient(45deg, #f09433 0%, #e6683c 25%, #dc2743 50%, #cc2366 75%, #bc1888 100%); }
+        .bg-x  { background-color: #000000; }
+        .bg-copy { background-color: var(--thrift-clay); }
 
         @media (max-width: 768px) {
             .glass-container { padding: 25px; border-radius: 0; }
@@ -216,15 +316,37 @@ $pid = isset($_GET['pid']) ? intval($_GET['pid']) : 0;
     </nav>
 
     <?php 
+    // Mengambil data produk dari database berdasarkan PID
     $ret = mysqli_query($con, "SELECT * FROM products WHERE id='$pid'");
     while($row = mysqli_fetch_array($ret)) {
+        
+        // --- LOGIKA VALIDASI GABUNGAN AMANKAN STATUS SOLD OUT ---
+        $is_soldout = false;
+        $check_avail = isset($row['productAvailability']) ? strtolower(trim($row['productAvailability'])) : '';
+
+        if (
+            $check_avail === 'out of stock' || 
+            (isset($row['stock']) && $row['stock'] == 0 && $row['stock'] !== '') || 
+            (isset($row['qty']) && $row['qty'] == 0 && $row['qty'] !== '')
+        ) {
+            $is_soldout = true;
+        }
     ?>
     
     <div class="glass-container">
         <div class="row">
             <div class="col-md-5">
                 <div class="image-wrapper">
-                    <img src="admin/productimages/<?php echo $row['id'];?>/<?php echo $row['productImage1'];?>" class="product-img" alt="Product Image">
+                    <?php if($is_soldout) { ?>
+                        <div class="soldout-badge-overlay">
+                            <span class="soldout-text-pill">SOLD OUT</span>
+                        </div>
+                    <?php } ?>
+                    
+                    <img src="admin/productimages/<?php echo $row['id'];?>/<?php echo $row['productImage1'];?>" 
+                         onerror="this.onerror=null; this.src='https://placehold.co/600x750/e6e2d6/8d775f?text=No+Image+Available';" 
+                         class="product-img" 
+                         alt="">
                 </div>
             </div>
 
@@ -237,7 +359,12 @@ $pid = isset($_GET['pid']) ? intval($_GET['pid']) : 0;
                         <div class="stars" style="color: #1a1a1a;">
                             <i class="fa fa-star"></i><i class="fa fa-star"></i><i class="fa fa-star"></i><i class="fa fa-star"></i><i class="fa fa-star"></i>
                         </div>
-                        <span class="small text-muted">(Ready Stock — 1 of 1)</span>
+                        
+                        <?php if($is_soldout) { ?>
+                            <span class="small text-danger fw-bold">(Habis Terjual)</span>
+                        <?php } else { ?>
+                            <span class="small text-muted">(Ready Stock — 1 of 1)</span>
+                        <?php } ?>
                     </div>
 
                     <div class="price-tag">
@@ -252,13 +379,23 @@ $pid = isset($_GET['pid']) ? intval($_GET['pid']) : 0;
                     </p>
 
                     <div class="action-group">
-                        <a href="product-details.php?action=add&id=<?php echo $row['id']; ?>&pid=<?php echo $row['id']; ?>" class="btn-main btn-outline">
-                            <i class="fa-solid fa-cart-shopping me-2"></i> + Keranjang
-                        </a>
-                        <a href="product-details.php?action=add&id=<?php echo $row['id']; ?>&pid=<?php echo $row['id']; ?>&buy=now" class="btn-main btn-dark">
-                            Checkout Sekarang
-                        </a>
-                        <button class="btn-icon" onclick="copyLink()">
+                        <?php if($is_soldout) { ?>
+                            <a href="javascript:void(0);" class="btn-main disabled">
+                                <i class="fa-solid fa-ban me-2"></i> Habis Terjual
+                            </a>
+                            <a href="javascript:void(0);" class="btn-main disabled">
+                                Sold Out
+                            </a>
+                        <?php } else { ?>
+                            <a href="product-details.php?action=add&id=<?php echo $row['id']; ?>&pid=<?php echo $row['id']; ?>" class="btn-main btn-outline">
+                                <i class="fa-solid fa-cart-shopping me-2"></i> + Keranjang
+                            </a>
+                            <a href="product-details.php?action=add&id=<?php echo $row['id']; ?>&pid=<?php echo $row['id']; ?>&buy=now" class="btn-main btn-dark">
+                                Checkout Sekarang
+                            </a>
+                        <?php } ?>
+                        
+                        <button class="btn-icon" data-bs-toggle="modal" data-bs-target="#shareModal">
                             <i class="fa-solid fa-share-nodes"></i>
                         </button>
                     </div>
@@ -266,11 +403,23 @@ $pid = isset($_GET['pid']) ? intval($_GET['pid']) : 0;
                     <div class="details-section">
                         <h5>Info Produk & Kondisi</h5>
                         <div class="desc-text">
-                            <?php echo $row['productDescription'];?>
+                            <?php 
+                            if(!empty($row['productDescription'])) {
+                                echo nl2br($row['productDescription']);
+                            } else {
+                                echo "
+                                <ul class='ps-3 mb-0' style='list-style-type: square;'>
+                                    <li><b>Kondisi:</b> Sangat Baik / Layak Pakai (9.5/10)</li>
+                                    <li><b>Ukuran:</b> Standard Fit (Sesuai gambar produk)</li>
+                                    <li><b>Bahan:</b> Katun Premium / Nyaman digunakan sehari-hari</li>
+                                    <li><b>Minus:</b> Tidak ada noda atau robek (Kondisi bersih terawat)</li>
+                                </ul>";
+                            }
+                            ?>
                         </div>
                         <div class="mt-4 p-3" style="background: var(--bg-canvas); border-radius: 12px; font-size: 13px;">
                             <i class="fa-solid fa-shield-heart me-2"></i> 
-                            Barang ini adalah <b>Thrift/Pre-loved</b> yang sudah dicuci bersih dan dikurasi kualitasnya.
+                            Barang ini adalah <b>Thrift/Pre-loved</b> yang sudah melalui proses pencucian bersih, sterilisasi higienis, dan terkurasi kualitasnya.
                         </div>
                     </div>
                 </div>
@@ -280,18 +429,66 @@ $pid = isset($_GET['pid']) ? intval($_GET['pid']) : 0;
     <?php } ?>
 </div>
 
-<div id="custom-toast">Link disalin ke clipboard!</div>
+<div class="modal fade" id="shareModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered" style="max-width: 400px;">
+        <div class="modal-content share-modal-content">
+            <div class="modal-header share-modal-header">
+                <h5 class="modal-title share-modal-title">Bagikan Produk</h5>
+                <button type="text" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body p-0">
+                <div class="share-grid">
+                    <a href="https://api.whatsapp.com/send?text=Cek%20koleksi%20thrift%20keren%20ini%20di%20GS.%20Studio!%20" target="_blank" class="share-item">
+                        <div class="share-icon-circle bg-wa"><i class="fa-brands fa-whatsapp"></i></div>
+                        WhatsApp
+                    </a>
+                    <a href="https://instagram.com" target="_blank" class="share-item">
+                        <div class="share-icon-circle bg-ig"><i class="fa-brands fa-instagram"></i></div>
+                        Instagram
+                    </a>
+                    <a href="https://x.com" target="_blank" class="share-item">
+                        <div class="share-icon-circle bg-x"><i class="fa-brands fa-x-twitter"></i></div>
+                        X / Twitter
+                    </a>
+                    <a href="javascript:void(0);" id="copy-link-btn" class="share-item">
+                        <div class="share-icon-circle bg-copy"><i class="fa-solid fa-link"></i></div>
+                        Salin Tautan
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="custom-toast">Tautan berhasil disalin!</div>
 
 <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-<script>
-function copyLink() {
-    navigator.clipboard.writeText(window.location.href);
-    const toast = document.getElementById("custom-toast");
-    toast.classList.add("show");
-    setTimeout(function(){ toast.classList.remove("show"); }, 3000);
-}
-</script>
 
+<script>
+$(document).ready(function() {
+    // Aksi tombol salin tautan di dalam modal share
+    $('#copy-link-btn').on('click', function() {
+        var currentUrl = window.location.href;
+        var $tempInput = $("<textarea>");
+        $("body").append($tempInput);
+        $tempInput.val(currentUrl).select();
+        document.execCommand("copy");
+        $tempInput.remove();
+
+        // Sembunyikan modal
+        $('#shareModal').modal('hide');
+
+        // Memunculkan toast
+        var toast = $("#custom-toast");
+        toast.text("Link produk berhasil disalin!");
+        toast.addClass("show");
+        
+        setTimeout(function() { 
+            toast.removeClass("show"); 
+        }, 3000);
+    });
+});
+</script>
 </body>
 </html>
