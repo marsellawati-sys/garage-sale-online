@@ -1,29 +1,26 @@
 <?php
 session_start();
-// Aktifkan error reporting untuk melihat kendala koneksi
-error_reporting(E_ALL); 
-ini_set('display_errors', 1);
+// Menonaktifkan error reporting di halaman produksi agar tidak ada kebocoran baris teks error PHP ke pengguna
+error_reporting(0); 
+ini_set('display_errors', 0);
 
 include('includes/config.php');
 
-// --- LOGIKA ADD TO CART (TIDAK BERUBAH) ---
+// --- LOGIKA ADD TO CART (DIKUNCI KE KUANTITAS 1 UNTUK GARAGE SALE) ---
 if(isset($_GET['action']) && $_GET['action']=="add"){
     $id=intval($_GET['id']);
-    if(isset($_SESSION['cart'][$id])){
-        if(is_array($_SESSION['cart'][$id])){
-            $_SESSION['cart'][$id]['quantity']++;
-        } else {
-            $old_qty = $_SESSION['cart'][$id];
-            $_SESSION['cart'][$id] = array("quantity" => $old_qty + 1, "price" => 0);
-        }
-    }else{
-        $sql_p="SELECT * FROM products WHERE id='{$id}'";
-        $query_p=mysqli_query($con,$sql_p);
-        if($query_p && mysqli_num_rows($query_p)!=0){
-            $row_p=mysqli_fetch_array($query_p);
-            $_SESSION['cart'][$row_p['id']]=array("quantity" => 1, "price" => $row_p['productPrice']);
-        }
+    
+    // Sesuai konsep thrift/garage sale, kuantitas selalu dipaksa bernilai 1
+    $_SESSION['cart'][$id] = array("quantity" => 1, "price" => 0);
+    
+    // Ambil harga asli dari database untuk disinkronkan ke dalam session cart
+    $sql_p="SELECT productPrice FROM products WHERE id='{$id}'";
+    $query_p=mysqli_query($con,$sql_p);
+    if($query_p && mysqli_num_rows($query_p)!=0){
+        $row_p=mysqli_fetch_array($query_p);
+        $_SESSION['cart'][$id]['price'] = $row_p['productPrice'];
     }
+
     if(isset($_GET['ajax'])){ exit; }
     header('location:index.php');
     exit();
@@ -40,7 +37,7 @@ if(isset($_GET['action']) && $_GET['action']=="add"){
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
-    
+     
     <style>
         :root {
             --bg-base: #fdfcfb;
@@ -60,7 +57,7 @@ if(isset($_GET['action']) && $_GET['action']=="add"){
             overflow-x: hidden;
         }
 
-        /* --- MODERN HEADER (SAMA) --- */
+        /* --- MODERN HEADER --- */
         .header-modern {
             background: rgba(255, 255, 255, 0.8) !important;
             backdrop-filter: blur(20px);
@@ -101,12 +98,11 @@ if(isset($_GET['action']) && $_GET['action']=="add"){
         .hero-text { z-index: 2; position: relative; }
         .hero-text h1 { font-size: clamp(45px, 8vw, 85px); font-weight: 800; line-height: 0.85; letter-spacing: -4px; margin-bottom: 20px; color: #fff; text-shadow: 0 2px 10px rgba(0,0,0,0.2); }
 
-        /* --- PRODUCT GRID (ZALORA STYLE - BAGIAN YANG DIUBAH) --- */
-        .product-item { transition: 0.3s ease; margin-bottom: 35px; }
+        /* --- PRODUCT GRID (ZALORA STYLE) --- */
+        .product-item { transition: 0.3s ease; margin-bottom: 35px; position: relative; }
         
-        /* Frame gambar dibuat tinggi (Portrait 3:4) */
         .img-wrapper {
-            background: #f4f4f4; border-radius: 0; /* Zalora/HM biasanya tajam/minimalis */
+            background: #f4f4f4; border-radius: 0;
             aspect-ratio: 3/4;
             overflow: hidden; position: relative; 
             border: none;
@@ -116,13 +112,14 @@ if(isset($_GET['action']) && $_GET['action']=="add"){
         .img-wrapper img { width: 100%; height: 100%; object-fit: cover; transition: transform 0.8s ease; }
         .product-item:hover img { transform: scale(1.05); }
 
-        /* Overlay Button ala H&M */
+        /* Overlay Button */
         .action-overlay {
             position: absolute; bottom: 0; left: 0; right: 0;
             background: rgba(255, 255, 255, 0.9);
             transform: translateY(100%);
             transition: 0.3s ease;
             display: flex; flex-direction: column;
+            z-index: 3;
         }
         .product-item:hover .action-overlay { transform: translateY(0); }
 
@@ -134,13 +131,30 @@ if(isset($_GET['action']) && $_GET['action']=="add"){
         }
         .btn-quick-add:hover { background: #333; }
 
+        /* Gaya Khusus untuk Badge Sold Out */
+        .sold-out-badge {
+            position: absolute;
+            top: 15px;
+            left: 15px;
+            background: rgba(17, 17, 17, 0.85);
+            backdrop-filter: blur(5px);
+            color: #fff;
+            font-size: 10px;
+            font-weight: 700;
+            padding: 6px 14px;
+            letter-spacing: 1.5px;
+            text-transform: uppercase;
+            z-index: 4;
+            border-radius: 4px;
+        }
+
         /* Typography Produk */
         .product-brand { font-size: 10px; font-weight: 800; color: #999; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 2px; }
         .product-name-link { font-size: 13px; color: #333; text-decoration: none; font-weight: 400; display: block; margin-bottom: 4px; }
         .product-name-link:hover { text-decoration: underline; }
         .price { font-weight: 700; color: #000; font-size: 14px; }
 
-        /* --- FOOTER & SERVICE (SAMA) --- */
+        /* --- FOOTER & SERVICE --- */
         .service-card { padding: 35px; border-radius: 24px; border: 1px solid var(--border); background: #fff; transition: 0.3s; }
         .footer-main { background: #fff; border-top: 1px solid var(--border); padding-top: 80px; margin-top: 100px; }
         .newsletter-pill { background: #f8f8f8; border-radius: 50px; padding: 6px; display: flex; border: 1px solid #eee; }
@@ -171,8 +185,10 @@ if(isset($_GET['action']) && $_GET['action']=="add"){
                     if(isset($_SESSION['login']) && $_SESSION['login'] != ""){
                         $uid = $_SESSION['id'];
                         $query_wish_count = mysqli_query($con, "SELECT id FROM wishlist WHERE userId='$uid'");
-                        $num_wish = mysqli_num_rows($query_wish_count);
-                        if($num_wish > 0) { echo '<span class="cart-badge" style="background: #ff4757;">'.$num_wish.'</span>'; }
+                        if($query_wish_count) {
+                            $num_wish = mysqli_num_rows($query_wish_count);
+                            if($num_wish > 0) { echo '<span class="cart-badge" style="background: #ff4757;">'.$num_wish.'</span>'; }
+                        }
                     }
                     ?>
                 </a>
@@ -218,36 +234,67 @@ if(isset($_GET['action']) && $_GET['action']=="add"){
 
         <?php
         $ret = mysqli_query($con, "SELECT * FROM products WHERE productPrice > 0 AND productName != '' ORDER BY rand() LIMIT 8");
-        if ($ret) {
+        if ($ret && mysqli_num_rows($ret) > 0) {
             while ($row = mysqli_fetch_array($ret)) {
+                // SINKRONISASI STOK: Deteksi apakah status produk 'Out of Stock'
+                $availability = isset($row['productAvailability']) ? trim($row['productAvailability']) : '';
+                $is_sold_out = (strcasecmp($availability, 'Out of Stock') == 0 || $availability == '');
         ?>
         <div class="col-6 col-md-3">
-            <div class="product-item">
+            <div class="product-item" style="<?php echo $is_sold_out ? 'opacity: 0.6;' : ''; ?>">
+                
                 <div class="img-wrapper">
+                    <?php if($is_sold_out): ?>
+                        <div class="sold-out-badge">
+                            <i class="fa-solid fa-circle-minus me-1"></i> Sold Out
+                        </div>
+                    <?php endif; ?>
+
                     <a href="product-details.php?pid=<?php echo $row['id'];?>">
-                        <img src="admin/productimages/<?php echo $row['id'];?>/<?php echo $row['productImage1'];?>" alt="">
+                        <img src="admin/productimages/<?php echo $row['id'];?>/<?php echo $row['productImage1'];?>" 
+                             onerror="this.onerror=null; this.src='https://placehold.co/450x600/e8e4d8/111111?text=No+Image+Available';" 
+                             alt="">
                     </a>
+
                     <div class="action-overlay">
-                        <a href="<?php echo (empty($_SESSION['login'])) ? 'login.php' : 'payment-method.php?id='.$row['id']; ?>" class="btn-quick-add text-center text-decoration-none" style="background:#fff; color:#000;">
-                            Beli Sekarang
-                        </a>
-                        <button onclick="addToCart(<?php echo $row['id']; ?>)" class="btn-quick-add" id="btn-<?php echo $row['id']; ?>">
-                            + Keranjang
-                        </button>
+                        <?php if($is_sold_out): ?>
+                            <button class="btn-quick-add text-center" disabled style="background:#e0e0e0; color:#888; cursor:not-allowed;">
+                                STOK HABIS
+                            </button>
+                        <?php else: ?>
+                            <a href="<?php echo (empty($_SESSION['login'])) ? 'login.php' : 'payment-method.php?id='.$row['id']; ?>" class="btn-quick-add text-center text-decoration-none" style="background:#fff; color:#000;">
+                                Beli Sekarang
+                            </a>
+                            <button onclick="addToCart(<?php echo $row['id']; ?>)" class="btn-quick-add" id="btn-<?php echo $row['id']; ?>">
+                                + Keranjang
+                            </button>
+                        <?php endif; ?>
                     </div>
                 </div>
+
                 <div class="product-info">
                     <span class="product-brand">Garage Sale Studio</span>
                     <a href="product-details.php?pid=<?php echo $row['id'];?>" class="product-name-link"><?php echo htmlentities($row['productName']);?></a>
-                    <div class="price">Rp <?php echo number_format($row['productPrice'], 0, ',', '.'); ?></div>
+                    <div class="price">
+                        <?php if($is_sold_out): ?>
+                            <span class="text-decoration-line-through text-muted opacity-50 me-1" style="font-size:12px;">Rp <?php echo number_format($row['productPrice'], 0, ',', '.'); ?></span>
+                            <span class="text-danger fw-bold" style="font-size:13px;">TERJUAL</span>
+                        <?php else: ?>
+                            Rp <?php echo number_format($row['productPrice'], 0, ',', '.'); ?>
+                        <?php endif; ?>
+                    </div>
                 </div>
+
             </div>
         </div>
         <?php 
             } 
-        } 
+        } else {
+            echo "<div class='col-12 text-center py-5'><p class='text-muted'>Belum ada katalog pakaian yang tersedia.</p></div>";
+        }
         ?>
     </div>
+    
     <section class="row g-4 my-5 pt-5">
         <div class="col-6 col-md-3 text-center">
             <div class="service-card h-100">
