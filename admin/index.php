@@ -3,139 +3,174 @@ session_start();
 error_reporting(0);
 include("include/config.php");
 
-// --- LOGIKA LOGIN ---
+// --- LOGIKA LOGIN (Terhubung langsung & aman ke database) ---
 if(isset($_POST['login']))
 {
-    $username=$_POST['username'];
-    $password=md5($_POST['password']);
-    $ret=mysqli_query($con,"SELECT * FROM admin WHERE username='$username' and password='$password'");
-    $num=mysqli_fetch_array($ret);
-    if($num>0)
+    $username = mysqli_real_escape_string($con, $_POST['username']);
+    $password = md5($_POST['password']);
+    
+    // Memeriksa kecocokan data ke tabel admin di database MySQL
+    $ret = mysqli_query($con, "SELECT * FROM admin WHERE username='$username' and password='$password'");
+    $num = mysqli_fetch_array($ret);
+    if($num > 0)
     {
-        $_SESSION['alogin']=$_POST['username'];
-        $_SESSION['id']=$num['id'];
-        header("location:manage-products.php");
+        $_SESSION['alogin'] = $_POST['username'];
+        $_SESSION['id'] = $num['id'];
+        // Dialihkan langsung ke Dashboard Analytics utama
+        header("location:dashboard.php");
         exit();
     }
     else
     {
-        $_SESSION['errmsg']="Username atau Password salah!";
-    }
-}
-
-// --- LOGIKA REGISTER ---
-if(isset($_POST['register']))
-{
-    $username=$_POST['username'];
-    $password=md5($_POST['password']);
-    
-    $check=mysqli_query($con,"SELECT * FROM admin WHERE username='$username'");
-    if(mysqli_num_rows($check) > 0){
-        $_SESSION['errmsg']="Username sudah terdaftar!";
-    } else {
-        $query=mysqli_query($con,"INSERT INTO admin(username,password) VALUES('$username','$password')");
-        if($query) {
-            $_SESSION['successmsg']="Registrasi berhasil! Silahkan Login.";
-        }
+        $_SESSION['errmsg'] = "Username atau Password salah!";
     }
 }
 ?>
-
 <!DOCTYPE html>
-<html lang="en">
+<html lang="id">
 <head>
-    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Garage Sale | Admin Portal</title>
+    <title>Sistem Gerbang Admin | Garage Sale Studio</title>
+    
     <link type="text/css" href="bootstrap/css/bootstrap.min.css" rel="stylesheet">
     <link type="text/css" href="bootstrap/css/bootstrap-responsive.min.css" rel="stylesheet">
-    <link type="text/css" href="css/theme.css" rel="stylesheet">
-    <link type="text/css" href="images/icons/css/font-awesome.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&family=Fraunces:ital,wght@0,700;1,400&display=swap" rel="stylesheet">
+    
     <style>
-        .module-head { background: #2d2d2d !important; color: white !important; }
-        .nav-tabs { margin-bottom: 0; border-bottom: none; }
-        .nav-tabs > li > a { border-radius: 4px 4px 0 0; background: #f9f9f9; }
-        .active a { background: #fff !important; font-weight: bold; }
-        .wrapper { padding-top: 60px; }
+        body {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            background-color: #f2f0eb; /* Warna canvas hangat krem toko depan */
+            margin: 0;
+            padding: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+        }
+
+        .login-wrapper {
+            width: 100%;
+            max-width: 440px;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+
+        .login-box {
+            background: #ffffff;
+            border-radius: 28px;
+            padding: 45px 40px;
+            box-shadow: 0 20px 50px rgba(141, 119, 95, 0.1);
+            border: 1px solid rgba(141, 119, 95, 0.08);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .brand-title {
+            font-family: 'Fraunces', serif;
+            font-size: 32px;
+            font-weight: 700;
+            color: #1e1e1e;
+            text-align: center;
+            margin-bottom: 5px;
+            letter-spacing: -0.5px;
+        }
+
+        .brand-subtitle {
+            font-size: 13px;
+            color: #8d775f;
+            text-align: center;
+            display: block;
+            margin-bottom: 35px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        /* --- STYLING FORM INPUT MODERN --- */
+        .input-group-custom {
+            position: relative;
+            margin-bottom: 22px;
+        }
+
+        .input-group-custom input {
+            width: 100%;
+            height: 54px;
+            background: #fdfdfd;
+            border: 1.5px solid #e6e2d6 !important;
+            border-radius: 14px !important;
+            padding: 10px 20px !important;
+            font-size: 14px !important;
+            color: #1e1e1e !important;
+            font-weight: 600;
+            box-sizing: border-box;
+            box-shadow: none !important;
+            transition: all 0.3s ease;
+        }
+
+        .input-group-custom input:focus {
+            border-color: #8d775f !important;
+            background: #ffffff;
+        }
+
+        /* --- BUTTONS --- */
+        .btn-action-submit {
+            width: 100%;
+            height: 54px;
+            background: #1e1e1e;
+            color: #ffffff !important;
+            border: none;
+            border-radius: 14px;
+            font-size: 14px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 8px 20px rgba(30, 30, 30, 0.15);
+        }
+
+        .btn-action-submit:hover {
+            background: #8d775f;
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(141, 119, 95, 0.25);
+        }
+
+        /* --- NOTIFIKASI ALERTS --- */
+        .alert-custom {
+            padding: 12px 18px;
+            border-radius: 12px;
+            font-size: 13px;
+            font-weight: 600;
+            margin-bottom: 25px;
+            text-align: center;
+        }
+        .alert-custom-danger { background: #fdf2f2; color: #de3b3b; border: 1px solid #fbe3e3; }
     </style>
 </head>
 <body>
 
-    <div class="navbar navbar-fixed-top">
-        <div class="navbar-inner">
-            <div class="container">
-                <a class="brand" href="index.php">Garage Sale | Admin Panel</a>
-                <ul class="nav pull-right">
-                    <li><a href="../">Back to Portal</a></li>
-                </ul>
-            </div>
-        </div>
-    </div>
+    <div class="login-wrapper">
+        <div class="login-box">
+            <div class="brand-title">GS. Studio</div>
+            <div class="brand-subtitle">Control Panel Gate</div>
 
-    <div class="wrapper">
-        <div class="container">
-            <div class="row">
-                <div class="span4 offset4">
-                    
-                    <ul class="nav nav-tabs" id="adminTab">
-                        <li class="active"><a href="#loginTab" data-toggle="tab">Login</a></li>
-                        <li><a href="#regTab" data-toggle="tab">Register</a></li>
-                    </ul>
+            <?php if(isset($_SESSION['errmsg'])) { ?>
+                <div class="alert-custom alert-custom-danger">
+                    <?php echo $_SESSION['errmsg']; unset($_SESSION['errmsg']); ?>
+                </div>
+            <?php } ?>
 
-                    <div class="tab-content">
-                        <div class="tab-pane active" id="loginTab">
-                            <div class="module module-login">
-                                <form class="form-vertical" method="post">
-                                    <div class="module-head"><h3>Sign In</h3></div>
-                                    <div class="module-body">
-                                        <?php if($_SESSION['errmsg']) { ?>
-                                            <div class="alert alert-error"><?php echo $_SESSION['errmsg']; unset($_SESSION['errmsg']); ?></div>
-                                        <?php } ?>
-                                        <?php if($_SESSION['successmsg']) { ?>
-                                            <div class="alert alert-success"><?php echo $_SESSION['successmsg']; unset($_SESSION['successmsg']); ?></div>
-                                        <?php } ?>
-                                        <div class="control-group">
-                                            <div class="controls row-fluid">
-                                                <input class="span12" type="text" name="username" placeholder="Username" required>
-                                            </div>
-                                        </div>
-                                        <div class="control-group">
-                                            <div class="controls row-fluid">
-                                                <input class="span12" type="password" name="password" placeholder="Password" required>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <div class="module-foot">
-                                        <button type="submit" name="login" class="btn btn-primary btn-block">Login</button>
-                                    </div>
-                                </form>
-                            </div>
-                        </div>
+            <form id="loginForm" method="post">
+                <div class="input-group-custom">
+                    <input type="text" name="username" placeholder="Username Administrator" required autocomplete="off">
+                </div>
+                <div class="input-group-custom">
+                    <input type="password" name="password" placeholder="Password Sistem" required>
+                </div>
+                <button type="submit" name="login" class="btn-action-submit">Masuk Dashboard</button>
+            </form>
 
-                        <div class="tab-pane" id="regTab">
-                            <div class="module module-login">
-                                <form class="form-vertical" method="post">
-                                    <div class="module-head"><h3>Create Admin Account</h3></div>
-                                    <div class="module-body">
-                                        <div class="control-group">
-                                            <div class="controls row-fluid">
-                                                <input class="span12" type="text" name="username" placeholder="New Username" required>
-                                            </div>
-                                        </div>
-                                        <div class="control-group">
-                                            <div class="controls row-fluid">
-                                                <input class="span12" type="password" name="password" placeholder="New Password" required>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <div class="module-foot">
-                                        <button type="submit" name="register" class="btn btn-success btn-block">Register Admin</button>
-                                    </div>
-                                </form>
-                            </div>
-                        </div>
-                    </div> </div>
-            </div>
         </div>
     </div>
 
