@@ -4,254 +4,169 @@ error_reporting(E_ALL);
 ini_set('display_errors', 1);
 include('includes/config.php');
 
-if(strlen($_SESSION['login']) == 0) {   
-    header('location:login.php');
-    exit();
-}
-
-if(!isset($_POST['submit'])) {
+if (!isset($_SESSION['login']) || strlen($_SESSION['login']) == 0) {
     header('location:index.php');
     exit();
 }
 
 $uid = $_SESSION['id'];
-$pid = intval($_POST['product_id']);
-$p_method = mysqli_real_escape_string($con, $_POST['payment_method']);
-$shipping = intval($_POST['shipping_cost']);
-$total = intval($_POST['grand_total']);
-$quantity = 1; 
 
-$query_order = mysqli_query($con, "INSERT INTO orders(userId, productId, quantity) VALUES('$uid', '$pid', '$quantity')");
-$order_id = mysqli_insert_id($con); 
+// Ambil data profil pembeli
+$query_user = mysqli_query($con, "SELECT * FROM users WHERE id='$uid'");
+$user = mysqli_fetch_array($query_user);
 
-$info_q = mysqli_query($con, "SELECT products.productName, products.productPrice, users.name, users.shippingAddress, users.contactno 
-                             FROM products, users 
-                             WHERE products.id='$pid' AND users.id='$uid'");
-$data = mysqli_fetch_array($info_q);
-$discount = ($data['productPrice'] >= 100000 ? $data['productPrice'] * 0.05 : 0);
+// Tangkap list id item belanjaan yang tersimpan dari halaman payment tadi
+$item_ids = $_SESSION['last_invoice_items'] ?? [];
+
+$total_produk = 0;
+$items_invoice = [];
+
+if (!empty($item_ids)) {
+    $ids_string = implode(',', $item_ids);
+    // Ambil detail nama barang & harga dari database berdasarkan apa yang baru dibeli
+    $query_p = mysqli_query($con, "SELECT productName, productPrice FROM products WHERE id IN ($ids_string)");
+    while ($row = mysqli_fetch_array($query_p)) {
+        $items_invoice[] = $row;
+        $total_produk += (float)$row['productPrice'];
+    }
+}
+
+// Hitung ongkir invoice sesuai data kota/provinsi tujuan
+$wilayah_gabung = $user['shippingCity'] ?? '';
+$provinsi_tampil = "Luar Jawa";
+if (!empty($wilayah_gabung)) {
+    $pecah = explode(',', $wilayah_gabung);
+    $provinsi_tampil = trim(end($pecah));
+}
+
+$daftar_jawa = ['banten', 'dki jakarta', 'jakarta', 'jawa barat', 'jawa tengah', 'di yogyakarta', 'yogyakarta', 'jawa timur'];
+$ongkir = (in_array(strtolower(trim($provinsi_tampil)), $daftar_jawa)) ? 15000 : 45000;
+$grand_total = $total_produk + $ongkir;
 ?>
 
 <!DOCTYPE html>
 <html lang="id">
 <head>
-    <meta charset="utf-8">
-    <title>Invoice Premium #GS-<?php echo $order_id; ?></title>
-    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <meta charset="UTF-8">
+    <title>Invoice Pembayaran - GarageSale</title>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
-        :root {
-            --primary: #111111;
-            --accent: #d4a373; /* Gold/Bronze accent */
-            --bg: #f4f2ee;
-            --border: #e8e4d8;
-        }
-
-        body { 
-            background-color: var(--bg); 
-            font-family: 'Plus Jakarta Sans', sans-serif; 
-            padding: 60px 0;
-            color: var(--primary);
-        }
-
-        .invoice-card {
-            background: #ffffff;
-            border-radius: 0; /* Flat minimalist look */
-            box-shadow: 0 40px 100px rgba(0,0,0,0.08);
-            max-width: 800px;
-            margin: auto;
-            position: relative;
-            overflow: hidden;
-        }
-
-        /* Accent bar at top */
-        .invoice-card::before {
-            content: "";
-            position: absolute;
-            top: 0; left: 0; right: 0;
-            height: 6px;
-            background: var(--primary);
-        }
-
-        .header-section {
-            padding: 60px 50px 40px;
-            border-bottom: 1px solid #f0f0f0;
-        }
-
-        .brand-logo {
-            font-weight: 800;
-            font-size: 24px;
-            letter-spacing: -1.5px;
-            text-transform: uppercase;
-        }
-
-        .invoice-label {
-            font-weight: 300;
-            font-size: 45px;
-            letter-spacing: -2px;
-            line-height: 1;
-        }
-
-        .info-grid {
-            padding: 40px 50px;
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 40px;
-        }
-
-        .info-title {
-            font-size: 10px;
-            font-weight: 800;
-            text-transform: uppercase;
-            letter-spacing: 2px;
-            color: #aaa;
-            margin-bottom: 15px;
-        }
-
-        .item-table {
-            width: 100%;
-            border-collapse: collapse;
-        }
-
-        .item-table th {
-            background: #fafafa;
-            padding: 15px 50px;
-            font-size: 11px;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            border-bottom: 1px solid #eee;
-        }
-
-        .item-table td {
-            padding: 30px 50px;
-            border-bottom: 1px solid #f9f9f9;
-        }
-
-        .total-section {
-            padding: 40px 50px 60px;
-            background: #fafafa;
-        }
-
-        .summary-row {
-            display: flex;
-            justify-content: flex-end;
-            margin-bottom: 10px;
-            font-size: 14px;
-        }
-
-        .grand-total-box {
-            display: flex;
-            justify-content: flex-end;
-            align-items: center;
-            margin-top: 20px;
-            padding-top: 20px;
-            border-top: 2px solid var(--primary);
-        }
-
-        .btn-premium {
-            background: var(--primary);
-            color: white;
-            padding: 14px 30px;
-            border-radius: 0;
-            font-weight: 700;
-            font-size: 12px;
-            text-transform: uppercase;
-            letter-spacing: 2px;
-            transition: 0.4s;
-            text-decoration: none;
-            border: none;
-        }
-
-        .btn-premium:hover {
-            background: #333;
-            color: white;
-            letter-spacing: 3px;
-        }
-
+        body { font-family: 'Plus Jakarta Sans', sans-serif; background-color: #f8f9fa; color: #333; padding: 40px 0; }
+        .invoice-card { background: #fff; border: 1px solid #eef0f2; border-radius: 24px; box-shadow: 0 10px 30px rgba(0,0,0,0.02); padding: 40px; max-width: 800px; margin: 0 auto; }
+        .invoice-header { border-bottom: 2px dashed #e8e4d8; padding-bottom: 25px; margin-bottom: 25px; }
+        .brand-name { font-weight: 900; font-size: 28px; letter-spacing: -1px; color: #111; }
+        .invoice-title { font-weight: 800; text-transform: uppercase; font-size: 14px; letter-spacing: 1px; color: #888; }
+        .section-title { font-weight: 800; font-size: 13px; text-transform: uppercase; color: #111; margin-bottom: 10px; border-bottom: 1px solid #111; padding-bottom: 4px; }
+        .table-invoice th { font-weight: 800; text-transform: uppercase; font-size: 12px; color: #666; background: #faf9f5; border: none; }
+        .table-invoice td { font-weight: 600; font-size: 14px; vertical-align: middle; border-bottom: 1px solid #f1f1f1; padding: 12px 8px; }
+        .grand-total-box { background: #111; color: #fff; border-radius: 14px; padding: 15px 20px; font-weight: 800; font-size: 18px; }
+        .no-print { display: flex; gap: 10px; justify-content: center; margin-top: 30px; }
         @media print {
+            body { background: #fff; padding: 0; }
+            .invoice-card { border: none; box-shadow: none; padding: 0; }
             .no-print { display: none; }
-            body { padding: 0; background: white; }
-            .invoice-card { box-shadow: none; border: 1px solid #eee; }
         }
     </style>
 </head>
 <body>
 
-<div class="container">
-    <div class="invoice-card">
-        <div class="header-section d-flex justify-content-between align-items-end">
-            <div>
-                <div class="brand-logo mb-4">Garage Sale.</div>
-                <div class="invoice-label">Invoice</div>
-            </div>
-            <div class="text-end">
-                <p class="mb-1 fw-bold">No. #GS-<?php echo $order_id; ?></p>
-                <p class="text-muted small"><?php echo date('D, d M Y'); ?></p>
-            </div>
+<div class="invoice-card">
+    <div class="invoice-header d-flex justify-content-between align-items-center">
+        <div>
+            <div class="brand-name">GarageSale.</div>
+            <small class="text-muted">Nota Transaksi Pembelian Sah</small>
         </div>
-
-        <div class="info-grid">
-            <div>
-                <div class="info-title">Ship To</div>
-                <h6 class="fw-bold mb-1"><?php echo htmlspecialchars($data['name']); ?></h6>
-                <p class="text-muted small mb-1"><?php echo htmlspecialchars($data['shippingAddress']); ?></p>
-                <p class="text-muted small"><?php echo htmlspecialchars($data['contactno']); ?></p>
-            </div>
-            <div class="text-md-end">
-                <div class="info-title">Payment</div>
-                <h6 class="fw-bold mb-1"><?php echo $p_method; ?></h6>
-                <p class="text-muted small">Status: <span class="text-dark fw-bold">PENDING</span></p>
-            </div>
+        <div class="text-end">
+            <span class="invoice-title d-block">Nota Invoice</span>
+            <span class="fw-bold text-dark" style="font-size: 15px;">#INV-<?php echo time(); ?></span>
         </div>
+    </div>
 
-        <table class="item-table">
-            <thead>
+    <div class="row g-4 mb-4">
+        <div class="col-6">
+            <div class="section-title"><i class="fa fa-user me-1"></i> Pelanggan</div>
+            <div class="small fw-600"><strong>Nama:</strong> <?php echo htmlspecialchars($user['name'] ?? '-'); ?></div>
+            <div class="small fw-600"><strong>Telepon:</strong> <?php echo htmlspecialchars($user['contactno'] ?? '-'); ?></div>
+            <div class="small fw-600"><strong>Email:</strong> <?php echo htmlspecialchars($user['email'] ?? '-'); ?></div>
+        </div>
+        <div class="col-6">
+            <div class="section-title"><i class="fa fa-truck me-1"></i> Destinasi Kirim</div>
+            <div class="small text-secondary fw-600"><?php echo htmlspecialchars($user['shippingAddress'] ?? 'Belum diisi'); ?></div>
+            <div class="small fw-bold text-dark"><?php echo htmlspecialchars($user['shippingCity'] ?? ''); ?> (<?php echo htmlspecialchars($user['shippingPincode'] ?? '-'); ?>)</div>
+        </div>
+    </div>
+
+    <div class="row bg-light rounded-3 p-3 mb-4 g-2 small fw-bold">
+        <div class="col-6">
+            <span class="text-muted d-block" style="font-size: 11px;">Metode Transaksi</span>
+            <span class="text-dark"><i class="fa fa-wallet me-1"></i> COD (Cash On Delivery)</span>
+        </div>
+        <div class="col-6 text-end">
+            <span class="text-muted d-block" style="font-size: 11px;">Waktu Checkout</span>
+            <span class="text-dark"><i class="fa fa-clock me-1"></i> <?php echo date("Y-m-d H:i:s"); ?></span>
+        </div>
+    </div>
+
+    <div class="section-title"><i class="fa fa-box me-1"></i> Daftar Barang</div>
+    <table class="table table-invoice mb-4">
+        <thead>
+            <tr>
+                <th>Nama Produk</th>
+                <th class="text-center">Kuantitas</th>
+                <th class="text-end">Harga Satuan</th>
+                <th class="text-end">Subtotal</th>
+            </tr>
+        </thead>
+        <tbody>
+            <?php if(!empty($items_invoice)): ?>
+                <?php foreach($items_invoice as $item): ?>
                 <tr>
-                    <th class="text-start">Description</th>
-                    <th class="text-center">Qty</th>
-                    <th class="text-end">Amount</th>
+                    <td><?php echo htmlspecialchars($item['productName']); ?></td>
+                    <td class="text-center">1 Pcs</td>
+                    <td class="text-end">Rs. <?php echo number_format($item['productPrice'], 0, ',', '.'); ?></td>
+                    <td class="text-end">Rs. <?php echo number_format($item['productPrice'], 0, ',', '.'); ?></td>
                 </tr>
-            </thead>
-            <tbody>
+                <?php endforeach; ?>
+            <?php else: ?>
                 <tr>
-                    <td>
-                        <div class="fw-bold text-uppercase small mb-1">Essential Collection</div>
-                        <div class="text-muted small"><?php echo htmlspecialchars($data['productName']); ?></div>
-                    </td>
-                    <td class="text-center">01</td>
-                    <td class="text-end fw-bold">Rp <?php echo number_format($data['productPrice'], 0, ',', '.'); ?></td>
+                    <td colspan="4" class="text-center text-muted">Belum ada barang belanjaan terdeteksi. Silakan berbelanja kembali.</td>
                 </tr>
-            </tbody>
-        </table>
+            <?php endif; ?>
+        </tbody>
+    </table>
 
-        <div class="total-section">
-            <div class="summary-row">
-                <span class="text-muted me-5">Subtotal</span>
-                <span class="fw-bold" style="min-width: 120px; text-align: right;">Rp <?php echo number_format($data['productPrice'], 0, ',', '.'); ?></span>
+    <div class="row justify-content-end">
+        <div class="col-md-6">
+            <div class="d-flex justify-content-between mb-2 small">
+                <span>Total Belanja:</span>
+                <span>Rs. <?php echo number_format($total_produk, 0, ',', '.'); ?></span>
             </div>
-            <div class="summary-row">
-                <span class="text-muted me-5">Shipping</span>
-                <span class="fw-bold" style="min-width: 120px; text-align: right;">Rp <?php echo number_format($shipping, 0, ',', '.'); ?></span>
+            <div class="d-flex justify-content-between mb-2 small">
+                <span>Ongkos Kirim:</span>
+                <span>Rs. <?php echo number_format($ongkir, 0, ',', '.'); ?></span>
             </div>
-            <div class="summary-row text-success">
-                <span class="me-5">Seasonal Discount</span>
-                <span class="fw-bold" style="min-width: 120px; text-align: right;">- Rp <?php echo number_format($discount, 0, ',', '.'); ?></span>
-            </div>
-            
-            <div class="grand-total-box">
-                <span class="info-title mb-0 me-4">Total Amount</span>
-                <span class="fs-3 fw-800">Rp <?php echo number_format($total, 0, ',', '.'); ?></span>
-            </div>
-
-            <div class="mt-5 pt-4 text-center no-print">
-                <a href="index.php" class="text-muted small text-decoration-none me-4 fw-bold">BACK TO SHOP</a>
-                <button onclick="window.print()" class="btn-premium">
-                    <i class="fa fa-print me-2"></i> Download PDF
-                </button>
+            <hr class="my-2">
+            <div class="d-flex justify-content-between align-items-center grand-total-box mt-3">
+                <span>Total Bayar:</span>
+                <span>Rs. <?php echo number_format($grand_total, 0, ',', '.'); ?></span>
             </div>
         </div>
     </div>
-    <p class="text-center mt-5 text-muted small opacity-50 no-print">© 2026 Garage Sale Store. All Rights Reserved.</p>
+
+    <div class="mt-4 pt-3 text-center border-top text-muted small fw-600">
+        <i class="fa fa-circle-info me-1"></i> Terima kasih telah berbelanja! Lembar ini otomatis disimpan pada arsip pembelian sistem.
+    </div>
+
+    <div class="no-print">
+        <button onclick="window.print();" class="btn btn-dark rounded-pill px-4 fw-bold">
+            <i class="fa fa-print me-1"></i> Cetak / PDF
+        </button>
+        <a href="index.php" class="btn btn-outline-secondary rounded-pill px-4 fw-bold">
+            <i class="fa fa-house me-1"></i> Beranda Utama
+        </a>
+    </div>
 </div>
 
 </body>
