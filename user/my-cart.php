@@ -1,8 +1,14 @@
-﻿<?php
+<?php
 session_start();
 error_reporting(E_ALL); 
 ini_set('display_errors', 1);
 include('includes/config.php');
+
+// Proteksi Keamanan Berbasis Sesi: Jika belum login, paksa kembali ke halaman login
+if (!isset($_SESSION['login']) || strlen($_SESSION['login']) == 0) {
+    header('location:login.php');
+    exit();
+}
 
 // --- 1. LOGIKA UPDATE & HAPUS ---
 
@@ -13,21 +19,14 @@ if(isset($_GET['del'])){
     echo "<script>window.location='my-cart.php';</script>";
 }
 
-if(isset($_POST['submit'])){
-    if(!empty($_SESSION['cart'])){
-        // Logika Update Quantity
-        foreach($_POST['quantity'] as $key => $val){
-            if((int)$val <= 0){
-                unset($_SESSION['cart'][$key]);
-            } else {
-                if(is_array($_SESSION['cart'][$key])){
-                    $_SESSION['cart'][$key]['quantity'] = (int)$val;
-                } else {
-                    $_SESSION['cart'][$key] = (int)$val;
-                }
-            }
+// Logika update dibatasi agar kuantitas selalu dipaksa bernilai 1
+if(isset($_POST['submit']) || !empty($_SESSION['cart'])){
+    foreach($_SESSION['cart'] as $key => $val){
+        if(is_array($_SESSION['cart'][$key])){
+            $_SESSION['cart'][$key]['quantity'] = 1;
+        } else {
+            $_SESSION['cart'][$key] = 1;
         }
-        echo "<script>alert('Keranjang diperbarui!'); window.location='my-cart.php';</script>";
     }
 }
 
@@ -42,9 +41,7 @@ if(!empty($_SESSION['cart']) && is_array($_SESSION['cart'])){
     
     if($query_h){
         while($row_h = mysqli_fetch_array($query_h)){
-            $item_id = $row_h['id'];
-            $val = $_SESSION['cart'][$item_id];
-            $qty = is_array($val) ? (int)$val['quantity'] : (int)$val;
+            $qty = 1; // Dikunci hanya 1 qty per produk
             $price = (float)$row_h['productPrice'];
             $total_price += ($price * $qty);
             $total_qty += $qty;
@@ -80,7 +77,17 @@ if(!empty($_SESSION['cart']) && is_array($_SESSION['cart'])){
         .table th { padding: 20px; font-weight: 700; color: #888; text-transform: uppercase; font-size: 12px; }
         
         .cart-img { width: 90px; height: 90px; object-fit: contain; border-radius: 15px; background: #f9f9f9; padding: 5px; }
-        .qty-input { width: 70px; padding: 8px; border-radius: 10px; border: 1px solid var(--beige-border); text-align: center; font-weight: 700; }
+        
+        /* Badge Kuantitas Statis Berwarna Gelap Eksklusif */
+        .qty-badge {
+            background-color: #f5f5f5;
+            color: #111;
+            font-weight: 800;
+            padding: 8px 16px;
+            border-radius: 10px;
+            border: 1px solid var(--beige-border);
+            display: inline-block;
+        }
         
         /* Tombol Hapus Modern */
         .btn-delete { 
@@ -105,7 +112,7 @@ if(!empty($_SESSION['cart']) && is_array($_SESSION['cart'])){
 <div class="top-brand-row">
     <a href="index.php" class="logo">GarageSale.</a>
     <div class="d-flex align-items-center gap-3">
-        <span class="text-muted fw-bold">Total: Rs. <?php echo number_format($total_price, 0, ',', '.'); ?></span>
+        <span class="text-muted fw-bold">Total: Rp <?php echo number_format($total_price, 0, ',', '.'); ?></span>
     </div>
 </div>
 
@@ -133,10 +140,8 @@ if(!empty($_SESSION['cart']) && is_array($_SESSION['cart'])){
                                 $query = mysqli_query($con, $sql);
                                 
                                 while($row = mysqli_fetch_array($query)){
-                                    $val = $_SESSION['cart'][$row['id']];
-                                    $qty = is_array($val) ? (int)$val['quantity'] : (int)$val;
                                     $price = (float)$row['productPrice'];
-                                    $subtotal = $qty * $price; 
+                                    $subtotal = 1 * $price; // Subtotal otomatis dikali 1
                             ?>
                             <tr>
                                 <td class="ps-4">
@@ -148,11 +153,11 @@ if(!empty($_SESSION['cart']) && is_array($_SESSION['cart'])){
                                         </div>
                                     </div>
                                 </td>
-                                <td class="fw-600">Rs. <?php echo number_format($price, 0, ',', '.'); ?></td>
+                                <td class="fw-600">Rp <?php echo number_format($price, 0, ',', '.'); ?></td>
                                 <td>
-                                    <input type="number" class="qty-input" value="<?php echo $qty; ?>" name="quantity[<?php echo $row['id']; ?>]" min="1">
+                                    <span class="qty-badge">1 Pcs</span>
                                 </td>
-                                <td class="fw-800 text-dark">Rs. <?php echo number_format($subtotal, 0, ',', '.'); ?></td>
+                                <td class="fw-800 text-dark">Rp <?php echo number_format($subtotal, 0, ',', '.'); ?></td>
                                 <td class="text-center">
                                     <a href="my-cart.php?del=<?php echo $row['id']; ?>" 
                                        class="btn-delete mx-auto" 
@@ -168,9 +173,8 @@ if(!empty($_SESSION['cart']) && is_array($_SESSION['cart'])){
                     </table>
                 </div>
                 
-                <div class="mt-4 d-flex justify-content-between align-items-center">
+                <div class="mt-4">
                     <a href="index.php" class="text-dark fw-bold text-decoration-none"><i class="fa fa-arrow-left me-2"></i> Lanjut Belanja</a>
-                    <button type="submit" name="submit" class="btn btn-dark px-5 py-3 rounded-4 fw-bold">Update Jumlah</button>
                 </div>
             </form>
         </div>
@@ -180,7 +184,7 @@ if(!empty($_SESSION['cart']) && is_array($_SESSION['cart'])){
                 <h4 class="fw-800 mb-4">Ringkasan</h4>
                 <div class="d-flex justify-content-between mb-3 opacity-75">
                     <span>Subtotal</span>
-                    <span>Rs. <?php echo number_format($total_price, 0, ',', '.'); ?></span>
+                    <span>Rp <?php echo number_format($total_price, 0, ',', '.'); ?></span>
                 </div>
                 <div class="d-flex justify-content-between mb-3 opacity-75">
                     <span>Pajak (0%)</span>
@@ -189,7 +193,7 @@ if(!empty($_SESSION['cart']) && is_array($_SESSION['cart'])){
                 <hr style="border-color: rgba(255,255,255,0.1)">
                 <div class="d-flex justify-content-between align-items-center mt-4">
                     <span class="h5 mb-0">Total</span>
-                    <span class="h2 fw-800 mb-0">Rs. <?php echo number_format($total_price, 0, ',', '.'); ?></span>
+                    <span class="h2 fw-800 mb-0">Rp <?php echo number_format($total_price, 0, ',', '.'); ?></span>
                 </div>
                 
                 <a href="payment-method.php" class="btn-to-payment">PROSES CHECKOUT</a>
@@ -207,4 +211,3 @@ if(!empty($_SESSION['cart']) && is_array($_SESSION['cart'])){
 
 </body>
 </html>
-<?php ?>
